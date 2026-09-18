@@ -148,7 +148,7 @@
 <body>
   <main class="app">
     <h1>HEIC / HEIF 一括変換</h1>
-    <p class="lead">HEIC / HEIF / HIF画像を、ブラウザ内でJPEGまたはPNGへまとめて変換し、ZIPで保存します。</p>
+    <p class="lead">HEIC / HEIF / HIFに加え、iPhone / iPadからJPEGやPNGとして渡された写真も、ブラウザ内でJPEGまたはPNGへまとめて変換し、ZIPで保存します。</p>
 
     <div id="protocolNotice" class="notice warn"></div>
     <div id="libNotice" class="notice err"></div>
@@ -161,7 +161,7 @@
       </div>
     </div>
     <input id="files" type="file" multiple
-      accept=".heic,.heif,.hif,image/heic,image/heif,image/heic-sequence,image/heif-sequence">
+      accept="image/*,.heic,.heif,.hif,image/heic,image/heif,image/heic-sequence,image/heif-sequence">
 
     <section class="settings">
       <div class="box">
@@ -199,7 +199,7 @@
     </section>
 
     <div class="foot">
-      ※ 画像データは変換のために外部サーバーへ送信しません。<br>
+      ※ 画像データは変換のために外部サーバーへ送信しません。iPhone / iPadでは元がHEICでもSafariからJPEGとして渡される場合があり、その場合も処理できます。<br>
       ※ 初回のみ変換ライブラリをインターネットから取得し、その後はPWAのキャッシュを利用できます。<br>
       ※ 撮影日時・GPSなどのEXIFメタデータは、変換後の画像へ基本的に引き継がれません。
     </div>
@@ -246,8 +246,58 @@
   function candidate(file) {
     const name = (file.name || "").toLowerCase();
     const type = (file.type || "").toLowerCase();
-    return /\.(heic|heif|hif)$/i.test(name) ||
-      ["image/heic","image/heif","image/heic-sequence","image/heif-sequence"].includes(type);
+
+    // HEIC/HEIF/HIF本体
+    if (/\.(heic|heif|hif)$/i.test(name)) return true;
+    if (["image/heic","image/heif","image/heic-sequence","image/heif-sequence"].includes(type)) return true;
+
+    // iPhone / iPadの写真ピッカーは、元がHEICでもSafariへJPEG/PNGとして渡すことがある。
+    if (type.startsWith("image/")) return true;
+    if (/\.(jpe?g|png|webp)$/i.test(name)) return true;
+
+    return false;
+  }
+
+
+  async function convertOrdinaryImage(file, mime, qualityValue) {
+    // JPEG/PNG/WebP等、Safariが通常画像として渡した場合の変換。
+    const url = URL.createObjectURL(file);
+    try {
+      const img = await new Promise((resolve, reject) => {
+        const el = new Image();
+        el.onload = () => resolve(el);
+        el.onerror = () => reject(new Error("画像を読み込めませんでした"));
+        el.src = url;
+      });
+
+      const canvas = document.createElement("canvas");
+      canvas.width = img.naturalWidth || img.width;
+      canvas.height = img.naturalHeight || img.height;
+
+      const ctx = canvas.getContext("2d");
+      if (!ctx) throw new Error("Canvasを初期化できませんでした");
+
+      // JPEG出力時、透過部分は白背景にする
+      if (mime === "image/jpeg") {
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+      }
+      ctx.drawImage(img, 0, 0);
+
+      const blob = await new Promise((resolve, reject) => {
+        canvas.toBlob(
+          b => b ? resolve(b) : reject(new Error("画像を書き出せませんでした")),
+          mime,
+          mime === "image/jpeg" ? qualityValue : undefined
+        );
+      });
+
+      canvas.width = 1;
+      canvas.height = 1;
+      return blob;
+    } finally {
+      URL.revokeObjectURL(url);
+    }
   }
 
   function safeBaseName(name) {
@@ -297,7 +347,7 @@
   function addFiles(fileList) {
     const incoming = Array.from(fileList || []).filter(candidate);
     if (!incoming.length) {
-      setStatus("HEIC / HEIF / HIF画像が見つかりませんでした。", true);
+      setStatus("対応画像が見つかりませんでした。HEIC / HEIF / HIF / JPEG / PNG等を選択してください。", true);
       return;
     }
     selectedFiles.push(...incoming);
@@ -358,18 +408,35 @@
       state.textContent = "変換中…";
 
       try {
-        let signatureOk = false;
+        let isHeicActual = false;
         try {
-          signatureOk = await HeicTo.isHeic(file);
+          isHeicActual = await HeicTo.isHeic(file);
         } catch (_) {
-          signatureOk = false;
+          isHeicActual = false;
         }
 
-        const outBlob = await HeicTo({
-          blob: file,
-          type: mime,
-          quality: mime === "image/jpeg" ? q : undefined
-        });
+        let outBlob;
+
+        if (isHeicActual || /\.(heic|heif|hif)$/i.test(file.name || "")) {
+          // HEIC / HEIF / HIF
+          outBlob = await HeicTo({
+            blob: file,
+            type: mime,
+            quality: mime === "image/jpeg" ? q : undefined
+          });
+        } else {
+          // iOSの写真ピッカー等からJPEG/PNGとして渡された画像
+          const inputType = (file.type || "").toLowerCase();
+
+          // JPEG→JPEGで画質90%以上なら、不要な再圧縮を避けてそのまま格納
+          if (mime === "image/jpeg" &&
+              (inputType === "image/jpeg" || /\.jpe?g$/i.test(file.name || "")) &&
+              q >= 0.90) {
+            outBlob = file;
+          } else {
+            outBlob = await convertOrdinaryImage(file, mime, q);
+          }
+        }
 
         if (!(outBlob instanceof Blob) || outBlob.size === 0) {
           throw new Error("変換結果が空でした");
@@ -378,7 +445,7 @@
         const outName = uniqueName(safeBaseName(file.name) + ext, used);
         zip.file(outName, outBlob);
         success++;
-        state.textContent = signatureOk ? "完了" : "完了（拡張子判定）";
+        state.textContent = isHeicActual ? "HEIC変換完了" : "画像処理完了";
       } catch (err) {
         const msg = err && err.message ? err.message : String(err);
         errors.push(`${file.name}: ${msg}`);

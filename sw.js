@@ -1,4 +1,4 @@
-const CACHE = "heic-converter-pwa-v1";
+const CACHE = "heic-converter-pwa-v2";
 
 const APP_SHELL = [
   "./",

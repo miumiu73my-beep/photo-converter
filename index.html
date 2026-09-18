@@ -1,0 +1,538 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#1d4ed8">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="HEIC変換">
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="apple-touch-icon" href="./icon-192.png">
+  <title>HEIC / HEIF 一括変換</title>
+
+  <!-- 初回だけインターネットから読み込み。Service Workerが以後キャッシュします。 -->
+  <script src="https://cdn.jsdelivr.net/npm/heic-to@1.5.2/dist/iife/heic-to.js" crossorigin="anonymous"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" crossorigin="anonymous"></script>
+
+  <style>
+    :root {
+      color-scheme: light;
+      --bg:#eef2f7;
+      --card:#ffffff;
+      --text:#172033;
+      --muted:#667085;
+      --line:#d0d5dd;
+      --blue:#1d4ed8;
+      --blue2:#2563eb;
+      --green:#067647;
+      --red:#b42318;
+      --amber:#b54708;
+      --amber-bg:#fffaeb;
+      --green-bg:#ecfdf3;
+      --red-bg:#fef3f2;
+    }
+    * { box-sizing:border-box; }
+    body {
+      margin:0;
+      min-height:100vh;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Yu Gothic UI", "Hiragino Sans", sans-serif;
+      background:var(--bg);
+      color:var(--text);
+      padding:max(18px, env(safe-area-inset-top)) 18px max(28px, env(safe-area-inset-bottom));
+    }
+    .app {
+      max-width:980px;
+      margin:0 auto;
+      background:var(--card);
+      border:1px solid var(--line);
+      border-radius:22px;
+      padding:28px;
+      box-shadow:0 10px 30px rgba(16,24,40,.08);
+    }
+    h1 { margin:0 0 8px; font-size:clamp(28px, 5vw, 44px); letter-spacing:-.03em; }
+    .lead { margin:0 0 18px; color:var(--muted); line-height:1.65; }
+    .notice {
+      margin:14px 0;
+      padding:12px 14px;
+      border-radius:12px;
+      line-height:1.5;
+      font-size:14px;
+      display:none;
+    }
+    .notice.show { display:block; }
+    .notice.warn { color:var(--amber); background:var(--amber-bg); border:1px solid #fedf89; }
+    .notice.ok { color:var(--green); background:var(--green-bg); border:1px solid #abefc6; }
+    .notice.err { color:var(--red); background:var(--red-bg); border:1px solid #fecdca; }
+    .drop {
+      margin:20px 0;
+      min-height:160px;
+      border:2px dashed #c7ccd6;
+      border-radius:18px;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      text-align:center;
+      padding:24px;
+      cursor:pointer;
+      user-select:none;
+      transition:.15s ease;
+    }
+    .drop.drag { border-color:var(--blue2); background:#eff6ff; }
+    .drop strong { font-size:20px; display:block; margin-bottom:8px; }
+    .drop span { color:var(--muted); }
+    input[type=file] { display:none; }
+    .settings {
+      display:grid;
+      grid-template-columns:1fr 1fr;
+      gap:14px;
+      margin:14px 0;
+    }
+    .box {
+      border:1px solid var(--line);
+      border-radius:14px;
+      padding:14px;
+    }
+    label { display:block; color:var(--muted); font-size:14px; margin-bottom:8px; }
+    select, input[type=range] { width:100%; }
+    select {
+      font:inherit;
+      border:1px solid #cfd4dc;
+      border-radius:10px;
+      padding:11px 12px;
+      background:white;
+    }
+    .quality-line { display:flex; align-items:center; gap:12px; }
+    .quality-line output { min-width:48px; text-align:right; }
+    .meta { color:var(--muted); margin:16px 0 10px; }
+    .actions { display:flex; flex-wrap:wrap; gap:10px; margin:14px 0; }
+    button {
+      border:0;
+      border-radius:12px;
+      padding:12px 16px;
+      font:inherit;
+      font-weight:700;
+      cursor:pointer;
+    }
+    button.primary { color:white; background:var(--blue); }
+    button.secondary { color:var(--text); background:white; border:1px solid var(--line); }
+    button:disabled { opacity:.45; cursor:not-allowed; }
+    progress { width:100%; height:12px; margin:10px 0 8px; }
+    .status { min-height:1.5em; font-weight:700; }
+    .status.ok { color:var(--green); }
+    .status.err { color:var(--red); }
+    .list { margin-top:14px; border-top:1px solid var(--line); }
+    .row {
+      display:grid;
+      grid-template-columns:minmax(0,1fr) auto;
+      gap:12px;
+      align-items:center;
+      padding:12px 0;
+      border-bottom:1px solid #eaecf0;
+    }
+    .filename { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .small { font-size:13px; color:var(--muted); }
+    .foot { margin-top:18px; color:var(--muted); font-size:13px; line-height:1.65; }
+    .install-panel {
+      margin-top:18px;
+      border-top:1px solid var(--line);
+      padding-top:16px;
+    }
+    @media (max-width:680px) {
+      .app { padding:20px; border-radius:18px; }
+      .settings { grid-template-columns:1fr; }
+      .actions button { flex:1 1 auto; }
+    }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <h1>HEIC / HEIF 一括変換</h1>
+    <p class="lead">HEIC / HEIF / HIF画像を、ブラウザ内でJPEGまたはPNGへまとめて変換し、ZIPで保存します。</p>
+
+    <div id="protocolNotice" class="notice warn"></div>
+    <div id="libNotice" class="notice err"></div>
+    <div id="offlineNotice" class="notice"></div>
+
+    <div id="drop" class="drop" tabindex="0" role="button" aria-label="HEIC画像を選択">
+      <div>
+        <strong>ここにHEIC / HEIF / HIF画像をドロップ</strong>
+        <span>またはクリックして複数ファイルを選択</span>
+      </div>
+    </div>
+    <input id="files" type="file" multiple
+      accept=".heic,.heif,.hif,image/heic,image/heif,image/heic-sequence,image/heif-sequence">
+
+    <section class="settings">
+      <div class="box">
+        <label for="format">出力形式</label>
+        <select id="format">
+          <option value="image/jpeg">JPEG</option>
+          <option value="image/png">PNG</option>
+        </select>
+      </div>
+      <div class="box" id="qualityBox">
+        <label for="quality">JPEG画質</label>
+        <div class="quality-line">
+          <input id="quality" type="range" min="50" max="100" step="1" value="90">
+          <output id="qualityOut">90%</output>
+        </div>
+      </div>
+    </section>
+
+    <div id="meta" class="meta">選択済み: 0枚</div>
+
+    <div class="actions">
+      <button id="convert" class="primary" disabled>一括変換してZIP保存</button>
+      <button id="clear" class="secondary" disabled>選択をクリア</button>
+    </div>
+
+    <progress id="progress" value="0" max="1"></progress>
+    <div id="status" class="status"></div>
+    <div id="list" class="list"></div>
+
+    <section class="install-panel">
+      <div class="actions">
+        <button id="installBtn" class="secondary" hidden>アプリとしてインストール</button>
+      </div>
+      <div id="installHelp" class="small"></div>
+    </section>
+
+    <div class="foot">
+      ※ 画像データは変換のために外部サーバーへ送信しません。<br>
+      ※ 初回のみ変換ライブラリをインターネットから取得し、その後はPWAのキャッシュを利用できます。<br>
+      ※ 撮影日時・GPSなどのEXIFメタデータは、変換後の画像へ基本的に引き継がれません。
+    </div>
+  </main>
+
+<script>
+(() => {
+  "use strict";
+
+  const $ = (id) => document.getElementById(id);
+  const drop = $("drop");
+  const fileInput = $("files");
+  const format = $("format");
+  const quality = $("quality");
+  const qualityOut = $("qualityOut");
+  const qualityBox = $("qualityBox");
+  const convertBtn = $("convert");
+  const clearBtn = $("clear");
+  const meta = $("meta");
+  const list = $("list");
+  const progress = $("progress");
+  const status = $("status");
+  const protocolNotice = $("protocolNotice");
+  const libNotice = $("libNotice");
+  const offlineNotice = $("offlineNotice");
+  const installBtn = $("installBtn");
+  const installHelp = $("installHelp");
+
+  let selectedFiles = [];
+  let deferredInstallPrompt = null;
+
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+                (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  const isStandalone = window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+
+  function humanBytes(n) {
+    if (!Number.isFinite(n)) return "";
+    const units = ["B", "KB", "MB", "GB"];
+    let i = 0, x = n;
+    while (x >= 1024 && i < units.length - 1) { x /= 1024; i++; }
+    return `${x.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
+  }
+
+  function candidate(file) {
+    const name = (file.name || "").toLowerCase();
+    const type = (file.type || "").toLowerCase();
+    return /\.(heic|heif|hif)$/i.test(name) ||
+      ["image/heic","image/heif","image/heic-sequence","image/heif-sequence"].includes(type);
+  }
+
+  function safeBaseName(name) {
+    const base = name.replace(/\.[^.]+$/, "") || "image";
+    return base.replace(/[\\/:*?"<>|]/g, "_");
+  }
+
+  function uniqueName(name, used) {
+    if (!used.has(name)) { used.add(name); return name; }
+    const dot = name.lastIndexOf(".");
+    const stem = dot >= 0 ? name.slice(0, dot) : name;
+    const ext = dot >= 0 ? name.slice(dot) : "";
+    let i = 2;
+    while (used.has(`${stem}_${i}${ext}`)) i++;
+    const out = `${stem}_${i}${ext}`;
+    used.add(out);
+    return out;
+  }
+
+  function renderFiles() {
+    const total = selectedFiles.reduce((s, f) => s + f.size, 0);
+    meta.textContent = `選択済み: ${selectedFiles.length}枚${selectedFiles.length ? `　合計: ${humanBytes(total)}` : ""}`;
+    list.innerHTML = selectedFiles.map((f, i) => `
+      <div class="row" id="row-${i}">
+        <div>
+          <div class="filename">${escapeHtml(f.name)}</div>
+          <div class="small">${escapeHtml(f.type || "MIME不明")}</div>
+        </div>
+        <div class="small" id="state-${i}">${humanBytes(f.size)}</div>
+      </div>
+    `).join("");
+    updateButtons();
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, ch => ({
+      "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"
+    }[ch]));
+  }
+
+  function updateButtons() {
+    const libsReady = typeof window.HeicTo === "function" && typeof window.JSZip === "function";
+    convertBtn.disabled = !selectedFiles.length || !libsReady;
+    clearBtn.disabled = !selectedFiles.length;
+  }
+
+  function addFiles(fileList) {
+    const incoming = Array.from(fileList || []).filter(candidate);
+    if (!incoming.length) {
+      setStatus("HEIC / HEIF / HIF画像が見つかりませんでした。", true);
+      return;
+    }
+    selectedFiles.push(...incoming);
+    progress.value = 0;
+    progress.max = Math.max(1, selectedFiles.length);
+    setStatus("");
+    renderFiles();
+  }
+
+  function setStatus(text, isError = false) {
+    status.textContent = text;
+    status.className = "status" + (text ? (isError ? " err" : " ok") : "");
+  }
+
+  function setBusy(busy) {
+    convertBtn.disabled = busy || !selectedFiles.length;
+    clearBtn.disabled = busy || !selectedFiles.length;
+    fileInput.disabled = busy;
+    format.disabled = busy;
+    quality.disabled = busy;
+  }
+
+  function saveBlob(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.rel = "noopener";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  }
+
+  async function convertAll() {
+    if (!selectedFiles.length) return;
+    if (typeof window.HeicTo !== "function" || typeof window.JSZip !== "function") {
+      setStatus("変換ライブラリを読み込めません。インターネット接続後にSafari / Edgeで再読み込みしてください。", true);
+      return;
+    }
+
+    setBusy(true);
+    setStatus("");
+    progress.value = 0;
+    progress.max = selectedFiles.length;
+
+    const zip = new JSZip();
+    const used = new Set();
+    const mime = format.value;
+    const ext = mime === "image/png" ? ".png" : ".jpg";
+    const q = Number(quality.value) / 100;
+    let success = 0;
+    const errors = [];
+
+    for (let i = 0; i < selectedFiles.length; i++) {
+      const file = selectedFiles[i];
+      const state = $(`state-${i}`);
+      state.textContent = "変換中…";
+
+      try {
+        let signatureOk = false;
+        try {
+          signatureOk = await HeicTo.isHeic(file);
+        } catch (_) {
+          signatureOk = false;
+        }
+
+        const outBlob = await HeicTo({
+          blob: file,
+          type: mime,
+          quality: mime === "image/jpeg" ? q : undefined
+        });
+
+        if (!(outBlob instanceof Blob) || outBlob.size === 0) {
+          throw new Error("変換結果が空でした");
+        }
+
+        const outName = uniqueName(safeBaseName(file.name) + ext, used);
+        zip.file(outName, outBlob);
+        success++;
+        state.textContent = signatureOk ? "完了" : "完了（拡張子判定）";
+      } catch (err) {
+        const msg = err && err.message ? err.message : String(err);
+        errors.push(`${file.name}: ${msg}`);
+        state.textContent = "失敗";
+      }
+
+      progress.value = i + 1;
+      await new Promise(r => setTimeout(r, 0));
+    }
+
+    try {
+      if (!success) {
+        throw new Error("変換できる画像がありませんでした。");
+      }
+
+      setStatus(`ZIP作成中… ${success}枚`);
+      const zipBlob = await zip.generateAsync({
+        type: "blob",
+        compression: "DEFLATE",
+        compressionOptions: { level: 6 }
+      });
+
+      const now = new Date();
+      const stamp = [
+        now.getFullYear(),
+        String(now.getMonth()+1).padStart(2,"0"),
+        String(now.getDate()).padStart(2,"0"),
+        "_",
+        String(now.getHours()).padStart(2,"0"),
+        String(now.getMinutes()).padStart(2,"0")
+      ].join("");
+
+      saveBlob(zipBlob, `HEIC変換_${stamp}.zip`);
+      setStatus(`完了: ${success}枚をZIPに保存しました。${errors.length ? `　失敗: ${errors.length}枚` : ""}`, false);
+
+      if (errors.length) {
+        console.warn("変換エラー:", errors);
+      }
+    } catch (err) {
+      setStatus(err && err.message ? err.message : String(err), true);
+    } finally {
+      setBusy(false);
+      updateButtons();
+    }
+  }
+
+  drop.addEventListener("click", () => fileInput.click());
+  drop.addEventListener("keydown", e => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      fileInput.click();
+    }
+  });
+  fileInput.addEventListener("change", e => {
+    addFiles(e.target.files);
+    e.target.value = "";
+  });
+
+  ["dragenter","dragover"].forEach(name => drop.addEventListener(name, e => {
+    e.preventDefault();
+    drop.classList.add("drag");
+  }));
+  ["dragleave","drop"].forEach(name => drop.addEventListener(name, e => {
+    e.preventDefault();
+    drop.classList.remove("drag");
+  }));
+  drop.addEventListener("drop", e => addFiles(e.dataTransfer.files));
+
+  clearBtn.addEventListener("click", () => {
+    selectedFiles = [];
+    progress.value = 0;
+    list.innerHTML = "";
+    setStatus("");
+    renderFiles();
+  });
+
+  convertBtn.addEventListener("click", convertAll);
+
+  quality.addEventListener("input", () => {
+    qualityOut.value = `${quality.value}%`;
+  });
+
+  format.addEventListener("change", () => {
+    qualityBox.style.opacity = format.value === "image/jpeg" ? "1" : ".45";
+    quality.disabled = format.value !== "image/jpeg";
+  });
+
+  // PWAインストール
+  window.addEventListener("beforeinstallprompt", e => {
+    e.preventDefault();
+    deferredInstallPrompt = e;
+    installBtn.hidden = false;
+  });
+
+  installBtn.addEventListener("click", async () => {
+    if (!deferredInstallPrompt) return;
+    deferredInstallPrompt.prompt();
+    await deferredInstallPrompt.userChoice;
+    deferredInstallPrompt = null;
+    installBtn.hidden = true;
+  });
+
+  window.addEventListener("appinstalled", () => {
+    installBtn.hidden = true;
+    installHelp.textContent = "インストール済みです。";
+  });
+
+  if (isStandalone) {
+    installHelp.textContent = "PWAとして起動中です。";
+  } else if (isIOS) {
+    installHelp.textContent = "iPhone / iPad: Safariで開き、共有 →「ホーム画面に追加」からPWAとして追加できます。";
+  } else {
+    installHelp.textContent = "Windows: Edge / Chromeで開くと、対応環境では「アプリとしてインストール」が表示されます。";
+  }
+
+  // file:// ではService Workerは使えない
+  if (location.protocol === "file:") {
+    protocolNotice.textContent = "このHTMLをファイルとして直接開いています。PWAとして使うには、フォルダ一式をHTTPSのWebサイトへ配置し、そのURLをSafari / Edgeで開いてください。Documents by ReaddleのHTMLビューアで開く方法ではPWAになりません。";
+    protocolNotice.classList.add("show");
+  }
+
+  // ライブラリ確認
+  window.addEventListener("load", () => {
+    const libsReady = typeof window.HeicTo === "function" && typeof window.JSZip === "function";
+    if (!libsReady) {
+      libNotice.textContent = "変換ライブラリの読み込みに失敗しました。初回はインターネット接続が必要です。Safari / Edgeでページを再読み込みしてください。";
+      libNotice.classList.add("show");
+    }
+    updateButtons();
+  });
+
+  // Service Worker
+  if ("serviceWorker" in navigator && location.protocol !== "file:") {
+    navigator.serviceWorker.addEventListener("message", event => {
+      if (event.data && event.data.type === "LIB_CACHE_STATUS") {
+        offlineNotice.className = "notice show " + (event.data.ok ? "ok" : "warn");
+        offlineNotice.textContent = event.data.ok
+          ? "オフライン準備完了: 変換ライブラリをキャッシュしました。"
+          : "PWA本体は利用できますが、変換ライブラリのオフライン保存が未完了です。ネット接続中に一度再読み込みしてください。";
+      }
+    });
+
+    navigator.serviceWorker.register("./sw.js").then(async reg => {
+      await navigator.serviceWorker.ready;
+      const worker = reg.active || reg.waiting || reg.installing;
+      if (worker) worker.postMessage({ type:"CHECK_LIB_CACHE" });
+    }).catch(err => {
+      offlineNotice.className = "notice show warn";
+      offlineNotice.textContent = "Service Workerを登録できませんでした: " + (err.message || String(err));
+    });
+  }
+
+  renderFiles();
+})();
+</script>
+</body>
+</html>

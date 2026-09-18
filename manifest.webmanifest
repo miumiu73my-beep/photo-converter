@@ -1,0 +1,23 @@
+{
+  "name": "HEIC / HEIF 一括変換",
+  "short_name": "HEIC変換",
+  "description": "HEIC / HEIF / HIF画像をJPEGまたはPNGへ一括変換してZIP保存します。",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#eef2f7",
+  "theme_color": "#1d4ed8",
+  "icons": [
+    {
+      "src": "./icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "./icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
